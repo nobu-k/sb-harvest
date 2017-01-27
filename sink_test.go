@@ -33,7 +33,7 @@ func TestSink(t *testing.T) {
 	}
 
 	ctx := core.NewContext(nil)
-	s, err := newSink(ctx, &SinkOption{
+	s, err := newSink(ctx, &SinkOptions{
 		Protocol:           "tcp",
 		Address:            fmt.Sprintf("127.0.0.1:%v", port),
 		BackoffInitialWait: time.Millisecond,
@@ -106,7 +106,7 @@ func listenThread(l net.Listener, ch chan<- []byte, discardConn <-chan struct{})
 	}
 }
 
-func writeTest(t *testing.T, ctx *core.Context, s *Sink, ch <-chan []byte) {
+func writeTest(t *testing.T, ctx *core.Context, s *sink, ch <-chan []byte) {
 	err := s.Write(ctx, core.NewTuple(data.Map{"a": data.Int(1)}))
 	if err != nil {
 		t.Fatalf("cannot write a tuple: %v", err)

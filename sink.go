@@ -6,10 +6,12 @@ import (
 	"net"
 	"time"
 
+	"gopkg.in/sensorbee/sensorbee.v0/bql"
 	"gopkg.in/sensorbee/sensorbee.v0/core"
+	"gopkg.in/sensorbee/sensorbee.v0/data"
 )
 
-type Sink struct {
+type sink struct {
 	dial            func() (net.Conn, error)
 	gctx            context.Context
 	cancelWriteLoop context.CancelFunc
@@ -20,7 +22,7 @@ type Sink struct {
 	writeTimeout time.Duration
 }
 
-func (s *Sink) Write(ctx *core.Context, t *core.Tuple) error {
+func (s *sink) Write(ctx *core.Context, t *core.Tuple) error {
 	// This sink blocks when the connect is lost until it is established.
 	// Therefore tuples are dropped on connect failure until SensorBee supports
 	// BUFFER SIZE/DROP configuration in INSERT INTO statement.
@@ -28,7 +30,7 @@ func (s *Sink) Write(ctx *core.Context, t *core.Tuple) error {
 	return nil
 }
 
-func (s *Sink) reconnectWithRetry(ctx *core.Context) (net.Conn, error) {
+func (s *sink) reconnectWithRetry(ctx *core.Context) (net.Conn, error) {
 	w := s.initialWait
 	for {
 		c, err := s.dial()
@@ -50,7 +52,7 @@ func (s *Sink) reconnectWithRetry(ctx *core.Context) (net.Conn, error) {
 	}
 }
 
-func (s *Sink) writeLoop(ctx *core.Context) {
+func (s *sink) writeLoop(ctx *core.Context) {
 	c, err := s.reconnectWithRetry(ctx)
 	if err != nil {
 		ctx.ErrLog(err).Error("connection failed")
@@ -107,26 +109,40 @@ func (s *Sink) writeLoop(ctx *core.Context) {
 	}
 }
 
-func (s *Sink) Close(ctx *core.Context) error {
+func (s *sink) Close(ctx *core.Context) error {
 	s.cancelWriteLoop()
 	return nil
 }
 
-type SinkOption struct {
+// SinkOptions is the options of soracom_harvest sink.
+type SinkOptions struct {
+	// Protocol currently only supports "tcp". "udp" can be used but not tested.
+	// The default value is "tcp".
 	Protocol string
-	Address  string
 
+	// Address is address of soracom harvest in "host:port" format.
+	// The default value is "harvest.soracom.io:8514".
+	Address string
+
+	// BackoffInitialWait is the duration that the sink waits for reconnection
+	// after the first disconnect. The default value is "5s".
 	BackoffInitialWait time.Duration
-	BackoffMaxWait     time.Duration
-	WriteTimeout       time.Duration
+
+	// BackofMaxWait is the maximum duration of exponential backoff. The default
+	// value is "1m".
+	BackoffMaxWait time.Duration
+
+	// WriteTimeout is timeout on sending data to the server. The default value
+	// is "1m".
+	WriteTimeout time.Duration
 }
 
-func newSink(ctx *core.Context, opt *SinkOption) (*Sink, error) {
+func newSink(ctx *core.Context, opt *SinkOptions) (*sink, error) {
 	dial := func() (net.Conn, error) {
 		return net.Dial(opt.Protocol, opt.Address)
 	}
 	gctx, cancel := context.WithCancel(context.Background())
-	s := &Sink{
+	s := &sink{
 		dial:            dial,
 		gctx:            gctx,
 		cancelWriteLoop: cancel,
@@ -138,4 +154,19 @@ func newSink(ctx *core.Context, opt *SinkOption) (*Sink, error) {
 
 	go s.writeLoop(ctx)
 	return s, nil
+}
+
+// CreateSink creates a new soracom_harvest sink.
+func CreateSink(ctx *core.Context, ioParams *bql.IOParams, params data.Map) (core.Sink, error) {
+	opt := SinkOptions{
+		Protocol:           "tcp",
+		Address:            "harvest.soracom.io:8514",
+		BackoffInitialWait: 5 * time.Second,
+		BackoffMaxWait:     time.Minute,
+		WriteTimeout:       time.Minute,
+	}
+	if err := data.Decode(params, &opt); err != nil {
+		return nil, err
+	}
+	return newSink(ctx, &opt)
 }
